@@ -70,7 +70,10 @@ except Exception:
 # -----------------------
 try:
     if not firebase_admin._apps:
-        cred = credentials.Certificate("firebase_credentials.json")
+        # Carrega as credenciais a partir dos Segredos do Streamlit
+        # Vamos criar um "dicionário" de segredos chamado [firebase_creds]
+        cred_dict = st.secrets["firebase_creds"] 
+        cred = credentials.Certificate(cred_dict) # <-- ESTA É A LINHA MODIFICADA
         firebase_admin.initialize_app(cred)
     db = firestore.client()
 except Exception as e:
