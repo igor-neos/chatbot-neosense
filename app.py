@@ -66,19 +66,27 @@ except Exception:
     st.stop()
 
 # -----------------------
-# 🔥 FIREBASE (corrigido)
+# 🔥 FIREBASE (solução definitiva)
 # -----------------------
+import tempfile
+import json
+
 try:
     if not firebase_admin._apps:
-        # Lê o bloco [firebase_creds] do secrets.toml e converte para dict
+        # Lê as credenciais do Streamlit Secrets
         cred_dict = dict(st.secrets["firebase_creds"])
 
-        # 🔧 Corrige as quebras de linha escapadas na chave privada
-        if "private_key" in cred_dict and isinstance(cred_dict["private_key"], str):
-            cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+        # Garante quebras de linha corretas e remove espaços invisíveis
+        cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n").strip()
 
-        # Inicializa o Firebase com o dicionário corrigido
-        cred = credentials.Certificate(cred_dict)
+        # Cria um arquivo temporário com o conteúdo JSON corrigido
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
+            json.dump(cred_dict, f)
+            f.flush()
+            cred_path = f.name  # caminho do arquivo temporário
+
+        # Inicializa o Firebase a partir do arquivo temporário
+        cred = credentials.Certificate(cred_path)
         firebase_admin.initialize_app(cred)
 
     db = firestore.client()
@@ -86,6 +94,7 @@ try:
 except Exception as e:
     st.error(f"Erro ao conectar ao Firebase: {e}")
     st.stop()
+
 
 
 # -----------------------
