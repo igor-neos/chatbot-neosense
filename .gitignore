@@ -1,0 +1,25 @@
+# Segredos e Credenciais
+firebase_credentials.json
+.streamlit/
+*.toml
+
+# Documentos fonte (matéria-prima)
+docs/
+
+# Scripts de desenvolvimento/processamento
+processar_documentos.py
+
+# Logs
+logs/
+*.log
+*.csv
+
+# Ambiente virtual e cache
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Configuração de Editor
+.vscode/
