@@ -4,6 +4,7 @@ import os
 import ssl
 import certifi
 import re
+import ast
 from pathlib import Path
 from datetime import datetime
 import streamlit as st
@@ -70,10 +71,15 @@ except Exception:
 # -----------------------
 try:
     if not firebase_admin._apps:
-        # Carrega as credenciais a partir dos Segredos do Streamlit
-        # Vamos criar um "dicionário" de segredos chamado [firebase_creds]
-        cred_dict = st.secrets["firebase_creds"] 
-        cred = credentials.Certificate(cred_dict) # <-- ESTA É A LINHA MODIFICADA
+        # st.secrets["firebase_creds"] está a vir como uma STRING, não um dict.
+        # Vamos convertê-la de volta para um dict.
+        cred_string = st.secrets["firebase_creds"]
+        
+        # ast.literal_eval converte com segurança uma string que parece um dict
+        # de volta num objeto dict real do Python.
+        cred_dict = ast.literal_eval(cred_string) 
+        
+        cred = credentials.Certificate(cred_dict)
         firebase_admin.initialize_app(cred)
     db = firestore.client()
 except Exception as e:
