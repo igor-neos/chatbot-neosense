@@ -66,19 +66,27 @@ except Exception:
     st.stop()
 
 # -----------------------
-# 🔥 FIREBASE
+# 🔥 FIREBASE (corrigido)
 # -----------------------
 try:
     if not firebase_admin._apps:
-        # Agora que os Segredos estão formatados corretamente, 
-        # o st.secrets["firebase_creds"] deve ser lido como um dict.
-        cred_dict = st.secrets["firebase_creds"] 
+        # Lê o bloco [firebase_creds] do secrets.toml e converte para dict
+        cred_dict = dict(st.secrets["firebase_creds"])
+
+        # 🔧 Corrige as quebras de linha escapadas na chave privada
+        if "private_key" in cred_dict and isinstance(cred_dict["private_key"], str):
+            cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+
+        # Inicializa o Firebase com o dicionário corrigido
         cred = credentials.Certificate(cred_dict)
         firebase_admin.initialize_app(cred)
+
     db = firestore.client()
+
 except Exception as e:
     st.error(f"Erro ao conectar ao Firebase: {e}")
     st.stop()
+
 
 # -----------------------
 # 🔥 LOGGING
