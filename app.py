@@ -1,4 +1,4 @@
-# app.py - Versão 3.4.5
+# app.py - Versão 3.9.3 (Firebase via JSON local, Gemini 2.5, SimpleRAG + JIRA + Redação)
 
 import os
 import ssl
@@ -19,8 +19,7 @@ from langchain_google_genai import (
     ChatGoogleGenerativeAI,
     GoogleGenerativeAIEmbeddings,
 )
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 import google.generativeai as genai
 from jira import JIRA
 
@@ -53,6 +52,7 @@ def check_password():
         st.error("😕 Senha incorreta.")
         st.stop()
 
+
 check_password()
 
 # -----------------------
@@ -66,27 +66,41 @@ except Exception:
     st.stop()
 
 # -----------------------
-# 🔥 FIREBASE (solução definitiva)
+# 🔥 FIREBASE (local JSON OU secrets do Streamlit Cloud)
 # -----------------------
 import tempfile
 import json
+from pathlib import Path
 
 try:
     if not firebase_admin._apps:
-        # Lê as credenciais do Streamlit Secrets
-        cred_dict = dict(st.secrets["firebase_creds"])
+        cred = None
 
-        # Garante quebras de linha corretas e remove espaços invisíveis
-        cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n").strip()
+        # 1) Tenta primeiro o arquivo local (desenvolvimento)
+        cred_path_local = Path(__file__).parent / "firebase_credentials.json"
+        if cred_path_local.exists():
+            # Modo dev: arquivo JSON local (NÃO versionado no Git)
+            cred = credentials.Certificate(str(cred_path_local))
+        else:
+            # 2) Se não tiver arquivo, tenta pegar das secrets (Streamlit Cloud)
+            try:
+                cred_dict = dict(st.secrets["firebase_creds"])
 
-        # Cria um arquivo temporário com o conteúdo JSON corrigido
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
-            json.dump(cred_dict, f)
-            f.flush()
-            cred_path = f.name  # caminho do arquivo temporário
+                # Ajusta quebras de linha da private_key, se vier com "\n" escapado
+                pk = cred_dict.get("private_key", "")
+                if "\\n" in pk:
+                    cred_dict["private_key"] = pk.replace("\\n", "\n").strip()
 
-        # Inicializa o Firebase a partir do arquivo temporário
-        cred = credentials.Certificate(cred_path)
+                cred = credentials.Certificate(cred_dict)
+            except Exception as e:
+                st.error(
+                    "Credenciais do Firebase não encontradas.\n\n"
+                    "Localmente, garanta que o arquivo 'firebase_credentials.json' "
+                    "está na mesma pasta do app.py.\n"
+                    "No Streamlit Cloud, configure a seção [firebase_creds] em Settings > Secrets."
+                )
+                st.stop()
+
         firebase_admin.initialize_app(cred)
 
     db = firestore.client()
@@ -95,15 +109,17 @@ except Exception as e:
     st.error(f"Erro ao conectar ao Firebase: {e}")
     st.stop()
 
-
-
 # -----------------------
 # 🔥 LOGGING
 # -----------------------
-def log_to_firestore(pergunta, resposta=None, erro=None, modo="normal", question_type=None, ticket=None):
-    """
-    Cria um documento em chat_logs e retorna o doc_id.
-    """
+def log_to_firestore(
+    pergunta,
+    resposta=None,
+    erro=None,
+    modo="normal",
+    question_type=None,
+    ticket=None,
+):
     try:
         data = {
             "timestamp": datetime.now().isoformat(),
@@ -115,17 +131,14 @@ def log_to_firestore(pergunta, resposta=None, erro=None, modo="normal", question
             "question_type": question_type,
             "ticket": ticket,
         }
-        # CORREÇÃO: Firestore .add() -> (update_time, document_reference)
-        _ , doc_ref = db.collection("chat_logs").add(data)
+        _, doc_ref = db.collection("chat_logs").add(data)
         return doc_ref.id
     except Exception as e:
         st.warning(f"⚠️ Erro ao salvar log no Firestore: {e}")
         return None
 
+
 def update_feedback_in_firestore(doc_id, feedback):
-    """
-    Atualiza o campo 'feedback' de um log existente (👍 ou 👎).
-    """
     try:
         db.collection("chat_logs").document(doc_id).update({"feedback": feedback})
     except Exception as e:
@@ -135,6 +148,7 @@ def update_feedback_in_firestore(doc_id, feedback):
 # 🧠 FUNÇÕES GERAIS
 # -----------------------
 NOT_FOUND_MSG = "Não encontrei essa informação na base de conhecimento."
+
 
 def detect_question_type(q: str) -> str:
     q = q.lower()
@@ -146,18 +160,19 @@ def detect_question_type(q: str) -> str:
         return "procedimento"
     return "conceitual"
 
-# Expansão semântica para melhorar recall
+
 SYN_MAP = {
-    r"\bsenha(s)?\b": "senha login acesso recuperar credenciais esqueci senha token",
-    r"\blogin\b": "login acesso autenticação entrar conectar token",
-    r"\bcampanha(s)?\b": "campanha ofertas descontos promoção marketing criar editar configurar vantagem público geral",
-    r"\bmiss(ões|ao)\b": "missões metas período apuração gasto referência pontuação objetivo missão fidelidade incremento",
-    r"\bagenda do vendedor\b": "agenda do vendedor carteira clientes contato campanhas aplicativo vendedor dashboard vendas material apoio",
-    r"\bbeneficio(s)?\b": "benefício recompensa catálogo missão criar editar adicionar prêmio catálogo de benefícios fidelidade",
-    r"\bpré[- ]cadastro\b": "pré-cadastro pre cadastro cadastro inicial cliente parcial loja oferta lead",
-    r"\bcatálogo\b": "catálogo benefícios recompensas prêmios lista registrar adicionar item resgate disponível utilizado",
-    r"\bpdv\b": "pdv integração ponto de venda loja código externo id_externo_organizacao saldo recompensa imprimir cupom",
+    r"senha(s)?": "senha login acesso recuperar credenciais esqueci senha token",
+    r"login": "login acesso autenticação entrar conectar token",
+    r"campanha(s)?": "campanha ofertas descontos promoção marketing criar editar configurar vantagem público geral",
+    r"miss(ões|ao)": "missões metas período apuração gasto referência pontuação objetivo missão fidelidade incremento",
+    r"agenda do vendedor": "agenda do vendedor carteira clientes contato campanhas aplicativo vendedor dashboard vendas material apoio",
+    r"beneficio(s)?": "benefício recompensa catálogo missão criar editar adicionar prêmio catálogo de benefícios fidelidade",
+    r"pré[- ]cadastro": "pré-cadastro pre cadastro cadastro inicial cliente parcial loja oferta lead",
+    r"catálogo": "catálogo benefícios recompensas prêmios lista registrar adicionar item resgate disponível utilizado",
+    r"pdv": "pdv integração ponto de venda loja código externo id_externo_organizacao saldo recompensa imprimir cupom",
 }
+
 
 def expand_query(user_query: str) -> str:
     expanded = user_query
@@ -166,28 +181,22 @@ def expand_query(user_query: str) -> str:
             expanded += f" ({exp})"
     return expanded
 
+
 def ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
 
-# CORREÇÃO: Função log_unanswered corrigida para evitar SyntaxError
+
 def log_unanswered(question: str, aug_query: str):
     try:
         logs_dir = Path("logs")
         ensure_dir(logs_dir)
         with open(
-            logs_dir / "perguntas_nao_respondidas.csv",
-            "a",
-            encoding="utf-8",
+            logs_dir / "perguntas_nao_respondidas.csv", "a", encoding="utf-8"
         ) as f:
             ts = datetime.now().isoformat()
-            
-            # 1. PreparamOS as variáveis ANTES da f-string
-            question_limpa = question.replace("\"", "'")
-            aug_query_limpa = aug_query.replace("\"", "'")
-            
-            # 2. A f-string agora é simples e limpa
+            question_limpa = question.replace('"', "'")
+            aug_query_limpa = aug_query.replace('"', "'")
             f.write(f'"{ts}","{question_limpa}","{aug_query_limpa}"\n')
-            
     except Exception:
         pass
 
@@ -200,12 +209,9 @@ def extract_ticket_id_from_input(text_input):
     match = re.search(r"([A-Z]+-[0-9]+)", text_input.upper())
     return match.group(1) if match else None
 
+
 @st.cache_data(ttl=600)
 def fetch_jira_data(ticket_id):
-    """
-    Retorna uma string formatada com os dados principais do ticket JIRA.
-    Se falhar, retorna o erro como string (para não quebrar a IA).
-    """
     try:
         jira_options = {"server": st.secrets["JIRA_SERVER"]}
         jira = JIRA(
@@ -227,6 +233,7 @@ def fetch_jira_data(ticket_id):
 # ✍️ MODO REDAÇÃO
 # -----------------------
 def detect_redacao_mode(prompt: str) -> bool:
+    p = prompt.lower()
     gatilhos = [
         "crie um rascunho",
         "crie um rascunho da documentação",
@@ -240,7 +247,19 @@ def detect_redacao_mode(prompt: str) -> bool:
         "documente a funcionalidade",
         "quero documentar",
     ]
-    return any(g in prompt.lower() for g in gatilhos)
+    if any(g in p for g in gatilhos):
+        return True
+    # Gatilho mais genérico: rascunho + algo de doc/ticket/funcionalidade
+    if "rascunho" in p and (
+        "documenta" in p
+        or "documentação" in p
+        or "documentacao" in p
+        or "ticket" in p
+        or "funcionalidade" in p
+    ):
+        return True
+    return False
+
 
 REDACAO_PROMPT = """
 Você é um redator técnico sênior da equipe de documentação da Neos Tecnologia.
@@ -267,16 +286,204 @@ Agora escreva a documentação técnica final:
 """
 
 # -----------------------
-# 📚 RAG (FAISS + MMR)
+# 🧩 DETECÇÃO DE PERGUNTAS SOBRE TICKET JIRA
 # -----------------------
+def detect_jira_ticket_question(prompt: str) -> bool:
+    p = prompt.lower().strip()
+
+    # Padrões que claramente se referem a "ticket" de venda, não JIRA
+    crm_ticket_padroes = [
+        "ticket médio",
+        "ticket medio",
+        "tickets loja",
+        "ticket loja",
+        "desconto no ticket",
+        "campanha de desconto no ticket",
+    ]
+    if any(b in p for b in crm_ticket_padroes):
+        return False
+
+    # 1) Gatilhos explícitos
+    gatilhos = [
+        "resuma este ticket",
+        "resuma o ticket",
+        "resumo do ticket",
+        "faça um resumo do ticket",
+        "resuma esta atividade",
+        "resuma esta atividade do jira",
+        "resuma a atividade do jira",
+        "atividade do jira",
+        "plano de teste",
+        "planos de teste",
+        "o que mudou",
+        "o que foi alterado",
+        "como era antes",
+        "como é a partir desta atividade",
+        "impacto desta atividade",
+        "impactos desta atividade",
+    ]
+    if any(g in p for g in gatilhos):
+        return True
+
+    # 2) Frases do tipo "segundo o ticket", "de acordo com este ticket"
+    if ("ticket" in p or "jira" in p) and any(
+        h in p
+        for h in [
+            "segundo",
+            "de acordo",
+            "este ticket",
+            "esse ticket",
+            "neste ticket",
+            "deste ticket",
+            "no ticket",
+        ]
+    ):
+        return True
+
+    # 3) Perguntas genéricas sobre "o que este ticket..." quando há JIRA
+    if "ticket" in p and any(
+        k in p
+        for k in [
+            "resumo",
+            "resuma",
+            "explique",
+            "descreva",
+            "fale sobre",
+            "o que este ticket",
+            "o que esse ticket",
+        ]
+    ):
+        return True
+
+    return False
+
+
+def has_jira_context() -> bool:
+    ctx = st.session_state.get("jira_context")
+    return bool(ctx)
+
+# -----------------------
+# 📚 RAG (FAISS + MMR) - com SimpleRAG + filtro de confiança
+# -----------------------
+class SimpleRAG:
+    def __init__(self, retriever, llm, prompt_template: PromptTemplate, vectorstore=None):
+        self.retriever = retriever
+        self.vectorstore = vectorstore
+        self.llm = llm
+        self.prompt_template = prompt_template
+        # limiar de distância/similaridade (scores muito altos = pouco similares)
+        self.similarity_threshold = 0.5
+
+    def _format_docs(self, docs):
+        pieces = []
+        for d in docs:
+            if hasattr(d, "page_content"):
+                pieces.append(d.page_content)
+            else:
+                pieces.append(str(d))
+        return "\n\n".join(pieces)
+
+    def invoke(self, inputs: dict):
+        query = inputs.get("query") if isinstance(inputs, dict) else inputs
+
+        docs = []
+        scores = None
+
+        try:
+            results = None
+            if self.vectorstore is not None and hasattr(
+                self.vectorstore, "similarity_search_with_score"
+            ):
+                results = self.vectorstore.similarity_search_with_score(query, k=10)
+            elif hasattr(self.retriever, "similarity_search_with_score"):
+                results = self.retriever.similarity_search_with_score(query, k=10)
+
+            if results is not None:
+                docs = [r[0] for r in results]
+                scores = [r[1] for r in results]
+            else:
+                if hasattr(self.retriever, "get_relevant_documents"):
+                    docs = self.retriever.get_relevant_documents(query)
+                else:
+                    docs = self.retriever.invoke(query)
+
+            top_score = scores[0] if scores else None
+            debug_info = {
+                "query": str(query),
+                "count": len(docs),
+                "top_score": top_score,
+                "snippet": (
+                    docs[0].page_content[:800]
+                    if docs and hasattr(docs[0], "page_content")
+                    else ""
+                ),
+                "error": None,
+            }
+        except Exception as e:
+            docs = []
+            scores = None
+            debug_info = {
+                "query": str(query),
+                "count": 0,
+                "top_score": None,
+                "snippet": "",
+                "error": str(e),
+            }
+
+        # guarda debug para inspecionar depois (quando SHOW_DEBUG=True)
+        try:
+            st.session_state["rag_debug"] = debug_info
+        except Exception:
+            pass
+
+        # filtro de confiança: se o doc mais próximo ainda ficou "longe", retorna NOT_FOUND
+        if scores and scores[0] is not None:
+            try:
+                if scores[0] > self.similarity_threshold:
+                    return {"result": NOT_FOUND_MSG}
+            except Exception:
+                pass
+
+        if not docs:
+            return {"result": NOT_FOUND_MSG}
+
+        context_text = self._format_docs(docs)
+        prompt_text = self.prompt_template.format(context=context_text, question=query)
+
+        try:
+            resp = self.llm.invoke(prompt_text)
+            if hasattr(resp, "content"):
+                text = resp.content.strip()
+            elif isinstance(resp, dict) and "text" in resp:
+                text = resp["text"].strip()
+            else:
+                text = str(resp).strip()
+        except Exception as e:
+            text = f"❌ Erro ao invocar o LLM: {e}"
+
+        # Pequeno fallback: se por acaso o modelo devolver NOT_FOUND_MSG mas havia contexto,
+        # mostramos um snippet cru.
+        if text.strip() == NOT_FOUND_MSG and docs:
+            snippet = context_text[:800]
+            text = (
+                "Encontrei algumas informações relacionadas na base de conhecimento:\n\n"
+                f"{snippet}"
+            )
+
+        return {"result": text}
+
+
 @st.cache_resource
 def load_rag_chain():
     embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/embedding-001", google_api_key=api_key
+        model="models/embedding-001",
+        google_api_key=api_key,
     )
 
+    index_path = Path(__file__).parent / "faiss_index_neosense"
+
     vectorstore = FAISS.load_local(
-        "faiss_index_neosense",
+        str(index_path),
         embeddings,
         allow_dangerous_deserialization=True,
     )
@@ -287,7 +494,7 @@ def load_rag_chain():
     )
 
     llm = ChatGoogleGenerativeAI(
-        model="models/gemini-2.5-flash-preview-05-20", # Mantendo o modelo da v3.4.4
+        model="gemini-2.5-flash",
         google_api_key=api_key,
         temperature=0.25,
         top_p=0.9,
@@ -300,8 +507,6 @@ Baseie sua resposta exclusivamente no conteúdo abaixo.
 - Seja direto, objetivo e didático.
 - Se houver referência clara a um módulo (ex: [Módulo: Missões]), mencione isso no começo da resposta.
 - Se a resposta tiver mais de 10 linhas, finalize com: "💡 Em resumo:" seguido de um resumo claro.
-- Se não houver informação, responda exatamente:
-  "Não encontrei essa informação na base de conhecimento."
 
 ---
 FONTES DE CONHECIMENTO:
@@ -315,13 +520,13 @@ RESPOSTA:
         input_variables=["context", "question"],
     )
 
-    qa_chain_local = RetrievalQA.from_chain_type(
-        llm=llm,
+    return SimpleRAG(
         retriever=retriever,
-        chain_type="stuff",
-        chain_type_kwargs={"prompt": PROMPT},
+        llm=llm,
+        prompt_template=PROMPT,
+        vectorstore=vectorstore,
     )
-    return qa_chain_local
+
 
 qa_chain = load_rag_chain()
 
@@ -338,17 +543,44 @@ st.sidebar.divider()
 with st.sidebar.expander("Dicas para criar boas perguntas"):
     st.markdown(
         """
-1. **Seja específico:** Ex: “Como criar campanha de desconto no ticket para todas as lojas?”
-2. **Use termos do Neosense CRM:** Nomes de módulos ou funções ajudam a precisão.
-3. **Inclua contexto:** Informe o código do ticket se a dúvida for sobre JIRA.
-4. **Pergunte em sequência:** Faça perguntas de acompanhamento quando necessário.
+1. **Seja específico:**
+Ex: “Como criar campanha de desconto no ticket para todas as lojas?”
+
+2. **Use termos do Neosense CRM:**
+Nomes de módulos ou funções ajudam a precisão.
+
+3. **Inclua contexto:**
+Informe o código do ticket se a dúvida for sobre JIRA.
+
+4. **Pergunte em sequência:**
+Faça perguntas de acompanhamento quando necessário.
 """
     )
 
+SHOW_DEBUG = False
+
+if SHOW_DEBUG:
+    with st.sidebar.expander("Debug RAG (base de conhecimento)", expanded=False):
+        debug = st.session_state.get("rag_debug")
+        if not debug:
+            st.caption("Nenhuma consulta RAG registrada ainda.")
+        else:
+            st.markdown(f"**Última query:** `{debug.get('query', '')}`")
+            st.markdown(f"**Documentos encontrados:** {debug.get('count', 0)}")
+            if debug.get("top_score") is not None:
+                st.markdown(f"**Score do 1º doc:** `{debug.get('top_score')}`")
+            if debug.get("error"):
+                st.markdown(f"**Erro:** `{debug['error']}`")
+            if debug.get("snippet"):
+                st.markdown("**Trecho do 1º documento:**")
+                st.code(debug["snippet"])
+
+# -----------------------
+# TÍTULO E SUGESTÕES
+# -----------------------
 st.title("🤖 Chatbot Neosense")
 st.caption("Assistente virtual da Neos Tecnologia.")
 
-# sugestões fixas de perguntas
 suggestions = [
     "O que é e como funciona a Agenda do Vendedor?",
     "Como recuperar a senha do aplicativo?",
@@ -359,7 +591,6 @@ cols = st.columns(2)
 for i, s in enumerate(suggestions):
     if cols[i % 2].button(s, use_container_width=True):
         st.session_state.chat_history = st.session_state.get("chat_history", [])
-        # CORREÇÃO TESTE: Usar o novo formato de histórico (dicionário)
         st.session_state.chat_history.append({"role": "user", "content": s})
         st.session_state["pending_response"] = True
         st.rerun()
@@ -367,7 +598,6 @@ for i, s in enumerate(suggestions):
 # -----------------------
 # ESTADO DE CONVERSA
 # -----------------------
-# CORREÇÃO TESTE: Inicializa o histórico como lista de dicionários
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "pending_response" not in st.session_state:
@@ -375,50 +605,44 @@ if "pending_response" not in st.session_state:
 if "jira_context" not in st.session_state:
     st.session_state.jira_context = None
 
-# -----------------------------------------------------------
-# CORREÇÃO TESTE: Renderização do histórico com botões persistentes
-# -----------------------------------------------------------
+# -----------------------
+# RENDERIZAÇÃO DO HISTÓRICO
+# -----------------------
 for i, msg in enumerate(st.session_state.chat_history):
     role = msg["role"]
-    content = msg.get("content", "") # Pega o 'content' do dicionário
+    content = msg.get("content", "")
     avatar_icon = "🧑" if role == "user" else "🤖"
-    
+
     with st.chat_message(role, avatar=avatar_icon):
-        # Lógica especial para exibir rascunho de redação
         if msg.get("modo") == "redacao":
             st.text_area("📝 Rascunho de documentação:", content, height=400)
         else:
             st.markdown(content)
 
-        # SE FOR ASSISTENTE, RENDERIZAR BOTÕES DE FEEDBACK
         if role == "assistant":
             doc_id = msg.get("doc_id")
             feedback_submitted = msg.get("feedback_submitted", False)
-            
-            # Só mostra os botões se o doc_id existir E o feedback ainda não foi enviado
+
             if doc_id and not feedback_submitted:
-                c1, c2, _ = st.columns([1, 1, 10]) # Colunas para botões pequenos
+                c1, c2, _ = st.columns([1, 1, 10])
                 with c1:
-                    # Usamos o doc_id como parte da chave para torná-la única
                     if st.button("👍", key=f"up_{doc_id}"):
                         update_feedback_in_firestore(doc_id, "up")
-                        # Marca que o feedback foi enviado para esta mensagem
                         st.session_state.chat_history[i]["feedback_submitted"] = True
-                        st.rerun() # Reroda para os botões sumirem
+                        st.rerun()
                 with c2:
                     if st.button("👎", key=f"down_{doc_id}"):
                         update_feedback_in_firestore(doc_id, "down")
-                        # Marca que o feedback foi enviado para esta mensagem
                         st.session_state.chat_history[i]["feedback_submitted"] = True
-                        st.rerun() # Reroda para os botões sumirem
-            
-            # Se o feedback já foi dado, mostra uma confirmação
+                        st.rerun()
+
             elif doc_id and feedback_submitted:
                 st.caption("Feedback registrado. Obrigado!")
 
-# captura nova pergunta
+# -----------------------
+# CAPTURA NOVA PERGUNTA
+# -----------------------
 if prompt := st.chat_input("Olá, sou o Neobot. Como posso te ajudar?"):
-    # CORREÇÃO TESTE: Usar o novo formato de histórico (dicionário)
     st.session_state.chat_history.append({"role": "user", "content": prompt})
     st.session_state.pending_response = True
     st.rerun()
@@ -429,95 +653,180 @@ if prompt := st.chat_input("Olá, sou o Neobot. Como posso te ajudar?"):
 if (
     st.session_state.pending_response
     and st.session_state.chat_history
-    and st.session_state.chat_history[-1]["role"] == "user" # Verificação de Dicionário
+    and st.session_state.chat_history[-1]["role"] == "user"
 ):
-    user_prompt = st.session_state.chat_history[-1]["content"] # Pega 'content' do Dicionário
-    full_prompt = user_prompt
+    user_prompt = st.session_state.chat_history[-1]["content"]
 
-    # contexto JIRA (aproveita sempre o mais recente)
+    # Atualiza contexto JIRA se houver algo na sidebar
     if jira_ticket_input:
         st.session_state.jira_context = fetch_jira_data(
             extract_ticket_id_from_input(jira_ticket_input)
         )
 
-    if st.session_state.jira_context:
-        full_prompt = (
-            f"Com base nos dados REAIS do ticket JIRA: "
-            f"'{st.session_state.jira_context}', responda: '{user_prompt}'"
-        )
-
     question_type = detect_question_type(user_prompt)
-    augmented_query = expand_query(full_prompt)
+    rag_query = expand_query(user_prompt)
 
-    # ---------------------------------
-    # MODO REDAÇÃO
-    # ---------------------------------
+    # 1) MODO REDAÇÃO (prioritário)
     if detect_redacao_mode(user_prompt):
-        llm_red = ChatGoogleGenerativeAI(
-            model="models/gemini-2.5-flash-preview-05-20", # Mantendo o modelo da v3.4.4
-            google_api_key=api_key,
-            temperature=0.3,
-            top_p=0.9,
-        )
-
-        contexto = qa_chain.invoke({"query": user_prompt})
-        rag_context = contexto.get("result", NOT_FOUND_MSG)
-
-        redacao_prompt = REDACAO_PROMPT.format(
-            jira_data=st.session_state.jira_context
-            or "Nenhum ticket informado.",
-            rag_context=rag_context,
-        )
-
-        doc_id = None # Inicializa doc_id
-        try:
-            resposta_modelo = llm_red.invoke(redacao_prompt)
-            output_text = resposta_modelo.content.strip()
-            doc_id = log_to_firestore(
-                pergunta=user_prompt,
-                resposta=output_text,
-                erro=None,
-                modo="redacao",
-                question_type=question_type,
-                ticket=st.session_state.jira_context,
-            )
-        except Exception as e:
-            output_text = f"❌ Erro ao gerar rascunho: {e}"
-            doc_id = log_to_firestore(
-                pergunta=user_prompt,
-                resposta=None,
-                erro=str(e),
-                modo="redacao",
-                question_type=question_type,
-                ticket=st.session_state.jira_context,
+        with st.spinner("Gerando rascunho de documentação..."):
+            llm_red = ChatGoogleGenerativeAI(
+                model="gemini-2.5-pro",
+                google_api_key=api_key,
+                temperature=0.3,
+                top_p=0.9,
             )
 
-        # CORREÇÃO TESTE: Adiciona ao histórico no formato dicionário
-        st.session_state.chat_history.append({
-            "role": "assistant",
-            "content": output_text,
-            "doc_id": doc_id,
-            "feedback_submitted": False,
-            "modo": "redacao" # Flag especial para renderizar como text_area
-        })
+            contexto = qa_chain.invoke({"query": rag_query})
+            rag_context = contexto.get("result", NOT_FOUND_MSG)
 
+            redacao_prompt = REDACAO_PROMPT.format(
+                jira_data=st.session_state.jira_context or "Nenhum ticket informado.",
+                rag_context=rag_context,
+            )
+
+            doc_id = None
+            try:
+                resposta_modelo = llm_red.invoke(redacao_prompt)
+                output_text = (
+                    resposta_modelo.content.strip()
+                    if hasattr(resposta_modelo, "content")
+                    else str(resposta_modelo).strip()
+                )
+                doc_id = log_to_firestore(
+                    pergunta=user_prompt,
+                    resposta=output_text,
+                    erro=None,
+                    modo="redacao",
+                    question_type=question_type,
+                    ticket=st.session_state.jira_context,
+                )
+            except Exception as e:
+                output_text = f"❌ Erro ao gerar rascunho: {e}"
+                doc_id = log_to_firestore(
+                    pergunta=user_prompt,
+                    resposta=None,
+                    erro=str(e),
+                    modo="redacao",
+                    question_type=question_type,
+                    ticket=st.session_state.jira_context,
+                )
+
+        st.session_state.chat_history.append(
+            {
+                "role": "assistant",
+                "content": output_text,
+                "doc_id": doc_id,
+                "feedback_submitted": False,
+                "modo": "redacao",
+            }
+        )
         st.session_state.pending_response = False
-        st.rerun() # Reroda para exibir a resposta e os botões
+        st.rerun()
 
-    # ---------------------------------
-    # MODO NORMAL (Pergunta & Resposta)
-    # ---------------------------------
+    # 2) FLUXO ESPECIAL: TICKET JIRA + RAG
+    elif has_jira_context() and detect_jira_ticket_question(user_prompt):
+        with st.spinner("Analisando ticket JIRA e base de conhecimento..."):
+            llm_jira = ChatGoogleGenerativeAI(
+                model="gemini-2.5-pro",
+                google_api_key=api_key,
+                temperature=0.25,
+                top_p=0.9,
+            )
+
+            jira_data = st.session_state.jira_context
+
+            try:
+                contexto_rag = qa_chain.invoke({"query": rag_query})
+                rag_context = contexto_rag.get("result", NOT_FOUND_MSG)
+            except Exception as e:
+                rag_context = f"Não foi possível recuperar contexto da base de conhecimento (erro: {e})."
+
+            prompt_jira = (
+                "Você é um analista de produto da Neos Tecnologia, trabalhando com o sistema Neosense CRM.\n\n"
+                "Você receberá:\n"
+                "1) Os dados REAIS (ou a tentativa de busca) de um ticket JIRA.\n"
+                "2) Um resumo de contexto da base de conhecimento do Neosense CRM (RAG).\n\n"
+                "Use SEMPRE as duas fontes para responder, deixando claro o que é:\n"
+                "- funcionamento atual do sistema (base de conhecimento)\n"
+                "- mudança proposta ou problema descrito no ticket (dados do ticket).\n\n"
+                "Regras IMPORTANTES:\n"
+                "- Se a pergunta usar expressões como 'segundo o ticket', 'de acordo com o ticket', "
+                "'neste ticket', 'deste ticket' ou perguntar o valor de um campo específico, "
+                "RESPONDA SOMENTE com base em 'DADOS DO TICKET JIRA'.\n"
+                "- Se a informação não estiver claramente descrita nos 'DADOS DO TICKET JIRA', diga que "
+                "o ticket não traz essa informação. Não tente inferir a partir do contexto RAG.\n\n"
+                "Tarefas principais:\n"
+                "1) Se a pergunta pedir RESUMO do ticket, resuma:\n"
+                "- contexto\n- problema/necessidade\n- solução proposta\n"
+                "- principais regras de negócio\n- impactos no sistema ou no usuário final.\n\n"
+                "2) Se a pergunta citar 'plano de teste', descreva um plano de teste em alto nível:\n"
+                "- objetivos do teste\n- principais cenários\n- exemplos de casos de teste\n"
+                "- critérios de aceite.\n\n"
+                "3) Se a pergunta falar de 'antes' e 'depois', explique:\n"
+                "- como o sistema funciona hoje (ANTES), com base no CONTEXTO RAG;\n"
+                "- o que muda (DEPOIS), com base nos DADOS DO TICKET.\n\n"
+                "Responda sempre em português, em tópicos, e não invente funcionalidades "
+                "que não estejam no ticket ou na base de conhecimento.\n\n"
+                "--- CONTEXTO DA BASE DE CONHECIMENTO (RAG) ---\n"
+                f"{rag_context}\n\n"
+                "--- DADOS DO TICKET JIRA ---\n"
+                f"{jira_data}\n\n"
+                "--- PERGUNTA DO USUÁRIO ---\n"
+                f"{user_prompt}\n\n"
+                "Agora responda:\n"
+            )
+
+            doc_id = None
+            try:
+                resposta_modelo = llm_jira.invoke(prompt_jira)
+                output_text = (
+                    resposta_modelo.content.strip()
+                    if hasattr(resposta_modelo, "content")
+                    else str(resposta_modelo).strip()
+                )
+                doc_id = log_to_firestore(
+                    pergunta=user_prompt,
+                    resposta=output_text,
+                    erro=None,
+                    modo="normal",
+                    question_type=question_type,
+                    ticket=st.session_state.jira_context,
+                )
+            except Exception as e:
+                output_text = (
+                    f"❌ Erro ao responder usando ticket + base de conhecimento: {e}"
+                )
+                doc_id = log_to_firestore(
+                    pergunta=user_prompt,
+                    resposta=None,
+                    erro=str(e),
+                    modo="normal",
+                    question_type=question_type,
+                    ticket=st.session_state.jira_context,
+                )
+
+        st.session_state.chat_history.append(
+            {
+                "role": "assistant",
+                "content": output_text,
+                "doc_id": doc_id,
+                "feedback_submitted": False,
+                "modo": "normal",
+            }
+        )
+        st.session_state.pending_response = False
+        st.rerun()
+
+    # 3) MODO NORMAL (apenas base de conhecimento)
     else:
-        doc_id = None # Inicializa doc_id
-        # Removemos o 'with st.chat_message...' daqui, 
-        # pois o loop principal vai renderizar
+        doc_id = None
         with st.spinner("Buscando na base de conhecimento..."):
             try:
-                resposta_modelo = qa_chain.invoke({"query": augmented_query})
+                resposta_modelo = qa_chain.invoke({"query": rag_query})
                 output_text = resposta_modelo.get("result", NOT_FOUND_MSG).strip()
 
                 if output_text.strip() == NOT_FOUND_MSG:
-                    log_unanswered(user_prompt, augmented_query)
+                    log_unanswered(user_prompt, rag_query)
 
                 doc_id = log_to_firestore(
                     pergunta=user_prompt,
@@ -539,14 +848,14 @@ if (
                     ticket=st.session_state.jira_context,
                 )
 
-            # CORREÇÃO TESTE: Adiciona ao histórico no formato dicionário
-            st.session_state.chat_history.append({
+        st.session_state.chat_history.append(
+            {
                 "role": "assistant",
                 "content": output_text,
                 "doc_id": doc_id,
                 "feedback_submitted": False,
-                "modo": "normal"
-            })
-
+                "modo": "normal",
+            }
+        )
         st.session_state.pending_response = False
-        st.rerun() # Reroda para exibir a resposta e os botões
+        st.rerun()
