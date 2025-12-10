@@ -7,6 +7,9 @@ import re
 from pathlib import Path
 from datetime import datetime
 import streamlit as st
+import shutil
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
 
 # --- CORREÇÃO SSL PARA AMBIENTES CORPORATIVOS ---
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
@@ -475,24 +478,71 @@ class SimpleRAG:
 
 @st.cache_resource
 def load_rag_chain():
+    # 1) Embeddings – MESMO modelo do processar_documentos.py
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/embedding-001",
         google_api_key=api_key,
     )
 
+    # 2) Caminho do índice FAISS (mesma pasta do app.py)
     index_path = Path(__file__).parent / "faiss_index_neosense"
 
-    vectorstore = FAISS.load_local(
-        str(index_path),
-        embeddings,
-        allow_dangerous_deserialization=True,
-    )
+    # 2.1) Função auxiliar para (re)criar o índice a partir do TXT
+    def build_index_from_txt() -> FAISS:
+        # 👉 AJUSTE AQUI o caminho/nome do seu TXT, se for diferente
+        txt_path = Path(__file__).parent / "docs" / "manuais_neosense.txt"
 
+        if not txt_path.exists():
+            st.error(
+                "Arquivo de base de conhecimento 'docs/manuais_neosense.txt' "
+                "não foi encontrado no repositório.\n\n"
+                "Certifique-se de que ele está versionado no GitHub (e não ignorado no .gitignore)."
+            )
+            st.stop()
+
+        with open(txt_path, "r", encoding="utf-8") as f:
+            full_text = f.read()
+
+        # Quebra em chunks (simplificado, mas eficaz)
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=900,
+            chunk_overlap=200,
+            separators=["\n### ", "\n## ", "\n#", "\n\n", ".", " "],
+        )
+        docs = splitter.create_documents([full_text])
+
+        vectorstore_local = FAISS.from_documents(docs, embeddings)
+        # Salva o índice para próximos boots (ambiente atual)
+        vectorstore_local.save_local(str(index_path))
+        return vectorstore_local
+
+    # 2.2) Tenta carregar o índice existente; se falhar, recria
+    if index_path.exists():
+        try:
+            vectorstore = FAISS.load_local(
+                str(index_path),
+                embeddings,
+                allow_dangerous_deserialization=True,
+            )
+        except Exception as e:
+            # Erro clássico de pickle/pydantic/langchain -> recria
+            st.warning(
+                "Índice FAISS existente está incompatível com a versão atual das bibliotecas. "
+                "Recriando índice a partir do TXT..."
+            )
+            shutil.rmtree(index_path, ignore_errors=True)
+            vectorstore = build_index_from_txt()
+    else:
+        # Primeiro deploy / índice ausente
+        vectorstore = build_index_from_txt()
+
+    # 3) Retriever
     retriever = vectorstore.as_retriever(
         search_type="mmr",
         search_kwargs={"k": 10, "fetch_k": 25, "lambda_mult": 0.45},
     )
 
+    # 4) LLM para responder usando o contexto
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
         google_api_key=api_key,
@@ -500,6 +550,7 @@ def load_rag_chain():
         top_p=0.9,
     )
 
+    # 5) Prompt do RAG (mantive o seu, só copiado daqui)
     PROMPT = PromptTemplate(
         template="""
 Você é o **Chatbot Neosense**, um assistente técnico especialista no sistema **Neosense CRM**.
