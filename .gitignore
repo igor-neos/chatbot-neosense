@@ -4,7 +4,7 @@ firebase_credentials.json
 *.toml
 
 # Documentos fonte (matéria-prima)
-docs/
+#docs/
 
 # Scripts de desenvolvimento/processamento
 processar_documentos.py
