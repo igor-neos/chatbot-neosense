@@ -1,12 +1,4 @@
 # app.py - Versão 5.3 (Correção de Estado Limpo e Logs Completos)
-# TESTE
-
-if st.secrets.get("BUILD_FAISS") == "true":
-    from build_faiss import *
-    st.success("FAISS gerado. Remova BUILD_FAISS.")
-    st.stop()
-# TESTE
-
 import os
 import ssl
 import certifi
@@ -16,6 +8,13 @@ from pathlib import Path
 from datetime import datetime
 import streamlit as st
 import shutil
+
+# TESTE
+if st.secrets.get("BUILD_FAISS") == "true":
+    from build_faiss import *
+    st.success("FAISS gerado. Remova BUILD_FAISS.")
+    st.stop()
+# TESTE
 
 # --- Supressão de avisos ---
 warnings.filterwarnings("ignore", category=UserWarning, module="torch")
