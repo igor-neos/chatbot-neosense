@@ -3,9 +3,10 @@ import streamlit as st
 
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import google.generativeai as genai
 
-# ⚠️ Usa a MESMA chave e o MESMO modelo do app
+# Configuração da API
 api_key = st.secrets["GOOGLE_API_KEY"]
 genai.configure(api_key=api_key)
 
@@ -14,15 +15,22 @@ embeddings = GoogleGenerativeAIEmbeddings(
     google_api_key=api_key
 )
 
-# Fonte da base
+# Lê o arquivo de conhecimento
 docs_path = Path("docs/manuais_neosense.txt")
+raw_text = docs_path.read_text(encoding="utf-8")
 
-texts = [docs_path.read_text(encoding="utf-8")]
+# 🔹 CHUNKING (ESSENCIAL)
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=800,
+    chunk_overlap=120
+)
 
-# Cria o FAISS
-vectorstore = FAISS.from_texts(texts, embeddings)
+chunks = text_splitter.split_text(raw_text)
 
-# Salva localmente
+# Gera o FAISS
+vectorstore = FAISS.from_texts(chunks, embeddings)
+
+# Salva o índice
 vectorstore.save_local("faiss_index_neosense")
 
-print("✅ FAISS gerado com sucesso")
+print(f"✅ FAISS gerado com {len(chunks)} chunks")
