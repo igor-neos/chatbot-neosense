@@ -23,3 +23,9 @@ __pycache__/
 
 # Configuração de Editor
 .vscode/
+
+# --- Ignorar arquivos de Backup e Testes ---
+backup-app.py
+ingestao-bup.py
+teste.py
+teste_diagnostico.py
