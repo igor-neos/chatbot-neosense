@@ -357,8 +357,9 @@ def load_rag_chain():
     if index_path.exists():
         try:
             vectorstore = FAISS.load_local(str(index_path), embeddings, allow_dangerous_deserialization=True)
-        except Exception:
-            vectorstore = build_index_empty()
+        except Exception as e:
+            st.error(f"Erro ao carregar FAISS: {e}")
+            raise
     else:
         vectorstore = build_index_empty()
 
