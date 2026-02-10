@@ -1,4 +1,5 @@
 # app.py - Versão 5.3 (Correção de Estado Limpo e Logs Completos)
+
 import os
 import ssl
 import certifi
@@ -8,13 +9,6 @@ from pathlib import Path
 from datetime import datetime
 import streamlit as st
 import shutil
-
-# TESTE
-if st.secrets.get("BUILD_FAISS") == "true":
-    from build_faiss import *
-    st.success("FAISS gerado. Remova BUILD_FAISS.")
-    st.stop()
-# TESTE
 
 # --- Supressão de avisos ---
 warnings.filterwarnings("ignore", category=UserWarning, module="torch")
@@ -363,9 +357,8 @@ def load_rag_chain():
     if index_path.exists():
         try:
             vectorstore = FAISS.load_local(str(index_path), embeddings, allow_dangerous_deserialization=True)
-        except Exception as e:
-            st.error(f"Erro ao carregar FAISS: {e}")
-            raise
+        except Exception:
+            vectorstore = build_index_empty()
     else:
         vectorstore = build_index_empty()
 
