@@ -7,7 +7,7 @@ firebase_credentials.json
 #docs/
 
 # Scripts de desenvolvimento/processamento
-processar_documentos.py
+gerar-faiss.py
 
 # Logs
 logs/

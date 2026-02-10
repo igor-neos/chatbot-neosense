@@ -15,15 +15,12 @@ warnings.filterwarnings("ignore", category=UserWarning, module="torch")
 os.environ["TORCH_CPP_LOG_LEVEL"] = "ERROR"
 
 # --- Import LangChain ---
-try:
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-except ImportError:
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # --- Correção SSL ---
-os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
-os.environ["GRPC_DEFAULT_SSL_ROOTS_FILE_PATH"] = certifi.where()
-ssl._create_default_https_context = ssl._create_unverified_context
+# os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
+# os.environ["GRPC_DEFAULT_SSL_ROOTS_FILE_PATH"] = certifi.where()
+# ssl._create_default_https_context = ssl._create_unverified_context
 
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import (
@@ -347,7 +344,7 @@ class SimpleRAG:
 
 @st.cache_resource
 def load_rag_chain():
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=api_key)
+    embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001", google_api_key=api_key)
     index_path = Path(__file__).parent / "faiss_index_neosense"
 
     def build_index_empty():
