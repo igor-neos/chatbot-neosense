@@ -47,20 +47,20 @@ st.set_page_config(
 # -----------------------
 # 🔐 CONTROLE DE ACESSO
 # -----------------------
-def check_password():
-    if st.session_state.get("password_correct", False):
-        return True
-    password = st.text_input("Digite a senha para acessar:", type="password")
-    if not password:
-        st.stop()
-    if password == st.secrets["APP_PASSWORD"]:
-        st.session_state.password_correct = True
-        st.rerun()
-    else:
-        st.error("😕 Senha incorreta.")
-        st.stop()
-
-check_password()
+# def check_password():
+#    if st.session_state.get("password_correct", False):
+#        return True
+#    password = st.text_input("Digite a senha para acessar:", type="password")
+#    if not password:
+#        st.stop()
+#    if password == st.secrets["APP_PASSWORD"]:
+#        st.session_state.password_correct = True
+#        st.rerun()
+#    else:
+#        st.error("😕 Senha incorreta.")
+#        st.stop()
+#
+#check_password()
 
 # -----------------------
 # 🔑 CONFIGURAÇÃO API
@@ -360,7 +360,7 @@ def load_rag_chain():
         vectorstore = build_index_empty()
 
     retriever = vectorstore.as_retriever(search_type="mmr", search_kwargs={"k": 20, "fetch_k": 40, "lambda_mult": 0.5})
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key, temperature=0.2, top_p=0.9)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=api_key, temperature=0.6, top_p=0.9)
 
     PROMPT = PromptTemplate(
         template="""

@@ -27,5 +27,3 @@ __pycache__/
 # --- Ignorar arquivos de Backup e Testes ---
 backup-app.py
 ingestao-bup.py
-teste.py
-teste_diagnostico.py
